@@ -247,6 +247,12 @@
 .all-disciplines-view .welcome-row { margin-bottom: 26px; }
 .all-disciplines-panel { padding: 20px 24px 0; }
 .all-disciplines-panel .panel-heading { margin-bottom: 12px; }
+.course-list-state { display: grid; justify-items: start; gap: 10px; padding: 26px 4px; color: #777481; font-size: 12px; line-height: 1.5; }
+.course-list-error { color: #9a4f4f; }
+.course-list-error span { overflow-wrap: anywhere; }
+.course-meta { flex-wrap: wrap; }
+.course-meta > span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.all-disciplines-panel .course-row { min-height: 76px; }
 .discipline-count { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; background: #f2effb; color: #6657b7; font-size: 12px; font-weight: 700; }
 .all-disciplines-empty { display: grid; justify-items: start; gap: 10px; padding: 30px 4px; color: #45424f; }
 .all-disciplines-empty span { color: #92909b; font-size: 11px; }
