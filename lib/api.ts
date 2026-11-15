@@ -14,7 +14,9 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (session?.access_token) headers.set("Authorization", `Bearer ${session.access_token}`);
 
-  const response = await fetch(new URL(path, baseUrl), { ...options, headers });
+  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const normalizedPath = path.replace(/^\/+/, "");
+  const response = await fetch(new URL(normalizedPath, normalizedBaseUrl), { ...options, headers });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `A API respondeu com status ${response.status}.`);
