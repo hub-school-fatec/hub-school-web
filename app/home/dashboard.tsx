@@ -4,11 +4,10 @@ import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "re
 import { useRouter } from "next/navigation";
 import { createClient } from "../../lib/supabase/client";
 import { isSupabaseConfigured } from "../../lib/supabase/config";
+import { getCourses, type Course, type CourseSchedule } from "../../lib/courses";
 import SemesterSelector from "./semester-selector";
 import { createSemester, updateSemester, type Semester } from "../../lib/semesters";
 
-type CourseSchedule = { day: string; start: string; end: string };
-type Course = { id: string; name: string; code: string; teacher: string; schedule: CourseSchedule[]; repeatWeekly: boolean; room: string };
 type DashboardProfile = { name: string; email: string };
 type SemesterConfig = { term: string; start: string; end: string; courseIds: string[] };
 const semesterConfigsStorageKey = "hub-school-semester-configs";
@@ -49,7 +48,7 @@ function WeeklyScheduleField({ initialSchedule, initialRepeatWeekly }: WeeklySch
 
 function formatCourseSchedule(course: Course) {
   if (!course.schedule.length) return "Horário não informado";
-  return course.schedule.map(({ day, start, end }) => `${day} ${start}–${end}`).join(" · ");
+  return course.schedule.map(({ day, start, end }) => start && end ? `${day} ${start}–${end}` : day).join(" · ");
 }
 
 const initialCourses: Course[] = [
@@ -108,6 +107,9 @@ export default function Home({ profile }: { profile: DashboardProfile }) {
   const [start, setStart] = useState("2026-08-03");
   const [end, setEnd] = useState("2026-12-18");
   const [courses, setCourses] = useState<Course[]>(initialCourses);
+  const [coursesLoading, setCoursesLoading] = useState(Boolean(process.env.NEXT_PUBLIC_API_URL));
+  const [coursesError, setCoursesError] = useState("");
+  const [courseReloadKey, setCourseReloadKey] = useState(0);
   const coursesLoaded = useRef(false);
   const defaultSemesterConfigs: Record<string, SemesterConfig> = {
     "demo-2026-1": { term: "2026/1", start: "2026-02-02", end: "2026-06-30", courseIds: initialCourses.map((course) => course.id) },
@@ -132,7 +134,7 @@ export default function Home({ profile }: { profile: DashboardProfile }) {
   const [notice, setNotice] = useState("");
   const courseBeingEdited = editingCourseIndex === null ? null : courses[editingCourseIndex] ?? null;
 
-  /* eslint-disable react-hooks/set-state-in-effect -- hydrate demo data from browser storage after mount. */
+  /* eslint-disable react-hooks/set-state-in-effect -- hydrate demo data from browser storage and API after mount. */
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(semesterConfigsStorageKey);
@@ -150,21 +152,42 @@ export default function Home({ profile }: { profile: DashboardProfile }) {
   }, [semesterConfigs]);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(coursesStorageKey);
-      if (saved) {
-        const parsed: unknown = JSON.parse(saved);
-        if (Array.isArray(parsed)) setCourses(parsed as Course[]);
+    let cancelled = false;
+    async function loadCourses() {
+      setCoursesError("");
+      if (process.env.NEXT_PUBLIC_API_URL) {
+        setCoursesLoading(true);
+        try {
+          const result = await getCourses();
+          if (!cancelled) setCourses(result);
+        } catch (error) {
+          if (!cancelled) {
+            setCourses([]);
+            setCoursesError(error instanceof Error ? error.message : "Não foi possível carregar as disciplinas.");
+          }
+        } finally {
+          if (!cancelled) setCoursesLoading(false);
+        }
+      } else {
+        try {
+          const saved = window.localStorage.getItem(coursesStorageKey);
+          if (saved) {
+            const parsed: unknown = JSON.parse(saved);
+            if (Array.isArray(parsed)) setCourses(parsed as Course[]);
+          }
+        } catch {
+          window.localStorage.removeItem(coursesStorageKey);
+        } finally {
+          coursesLoaded.current = true;
+        }
       }
-    } catch {
-      window.localStorage.removeItem(coursesStorageKey);
-    } finally {
-      coursesLoaded.current = true;
     }
-  }, []);
+    void loadCourses();
+    return () => { cancelled = true; };
+  }, [courseReloadKey]);
 
   useEffect(() => {
-    if (coursesLoaded.current) window.localStorage.setItem(coursesStorageKey, JSON.stringify(courses));
+    if (!process.env.NEXT_PUBLIC_API_URL && coursesLoaded.current) window.localStorage.setItem(coursesStorageKey, JSON.stringify(courses));
   }, [courses]);
 
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -370,14 +393,15 @@ export default function Home({ profile }: { profile: DashboardProfile }) {
 
   function renderCourseRow(c: Course, i: number) {
     const catalogIndex = courses.findIndex((course) => course.id === c.id);
+    const courseDetails = [c.workloadHours ? `${c.workloadHours}h` : "", c.classesPerWeek ? `${c.classesPerWeek} aulas/semana` : ""].filter(Boolean).join(" · ");
     return <article className="course-row" key={c.id}>
       <div className={`course-monogram tone-${i % 4}`}>{c.code.slice(0, 2).toUpperCase()}</div>
-      <div className="course-main"><div className="course-title"><b>{c.name}</b><span>{c.code}</span></div><div className="course-meta"><span>♙ {c.teacher}</span><span>◷ {formatCourseSchedule(c)}</span></div></div>
-      <div className="course-room">⌖ <span>{c.room}</span></div>
-      <div className="course-actions" ref={courseMenuIndex === catalogIndex ? courseActionsRef : null}>
+      <div className="course-main"><div className="course-title"><b>{c.name}</b><span>{c.code}</span></div><div className="course-meta">{c.teacher && <span>♙ {c.teacher}</span>}<span>◷ {formatCourseSchedule(c)}</span>{courseDetails && <span>{courseDetails}</span>}</div></div>
+      {c.room && <div className="course-room">⌖ <span>{c.room}</span></div>}
+      {!process.env.NEXT_PUBLIC_API_URL && <div className="course-actions" ref={courseMenuIndex === catalogIndex ? courseActionsRef : null}>
         <button className="row-more" type="button" aria-label={`Opções de ${c.name}`} aria-haspopup="menu" aria-expanded={courseMenuIndex === catalogIndex} onClick={() => setCourseMenuIndex((current) => current === catalogIndex ? null : catalogIndex)}>···</button>
         {courseMenuIndex === catalogIndex && <div className="course-actions-menu" role="menu"><button type="button" role="menuitem" onClick={() => editCourse(catalogIndex)}>Editar</button></div>}
-      </div>
+      </div>}
     </article>;
   }
   function startNewSemester() {
@@ -452,12 +476,12 @@ export default function Home({ profile }: { profile: DashboardProfile }) {
     <section className="main-area">
       <header className="topbar"><div className="breadcrumb">Meu espaço <span>/</span> <b>{page}</b></div><div className="top-actions"><button className="icon-button" aria-label="Notificações" onClick={() => notify("Você está em dia por aqui.")}>♧<i/></button><div className="top-divider"/><div className="profile-menu-anchor" ref={profileMenuRef}><button className="top-profile" title="Abrir perfil" aria-label="Abrir perfil" aria-haspopup="dialog" aria-expanded={profileOpen} aria-controls="profile-menu" onClick={() => setProfileOpen(open => !open)}><span className="avatar small-avatar">{profileInitials}</span><span>{profileName}</span></button>{profileOpen && <div className="profile-menu" id="profile-menu" role="dialog" aria-label="Prévia do perfil"><div className="profile-menu-heading"><span className="avatar profile-menu-avatar">{profileInitials}</span><div><b>{profileName}</b><small>{profile.email || "Aluno Fatec Franca"}</small></div></div><div className="profile-menu-divider"/><div className="profile-academic"><span>▦</span><div><small>PERFIL ACADÊMICO</small><b>Estudante · Fatec Franca</b></div></div><button className="profile-edit" onClick={() => { setProfileDraft(profileName); setNewEmailDraft(""); setNewPasswordDraft(""); setConfirmPasswordDraft(""); setReauthRequired(false); setReauthCode(""); setProfileFeedback(""); setProfileNotice(""); setProfileOpen(false); setProfileEditorOpen(true); }}><span>✎</span>Editar informações</button><button className="profile-logout" onClick={signOut}><span>↪</span>Sair da conta</button></div>}</div></div></header>
       <div className="content">
-        <div className="semester-content-selector"><SemesterSelector onSemesterChange={setActiveSemester} onCreateSemester={startNewSemester} /></div>{page === "Disciplinas" ? <div className="all-disciplines-view"><div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> SEMESTRE {activeSemester?.nome ?? "—"} · FATEC FRANCA</div><h1>Disciplinas</h1><p className="welcome-copy">Todas as disciplinas cadastradas no quadro geral.</p></div><button className="primary-button" onClick={() => openNewCourse()}><span>＋</span> Nova disciplina</button></div><section className="panel all-disciplines-panel"><div className="panel-heading"><div><h3>Todas as disciplinas</h3><p>{courses.length} {courses.length === 1 ? "disciplina cadastrada" : "disciplinas cadastradas"}</p></div><span className="discipline-count">{String(courses.length).padStart(2, "0")}</span></div>{courses.length ? <div className="course-list">{courses.map((course) => renderCourseRow(course, courses.indexOf(course)))}</div> : <div className="all-disciplines-empty"><b>Nenhuma disciplina cadastrada</b><span>Adicione uma disciplina para começar a organizar seu semestre.</span><button className="outline-button" onClick={() => openNewCourse()}>Adicionar disciplina</button></div>}</section></div> : <><div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> SEMESTRE {activeSemester?.nome ?? "—"} · FATEC FRANCA</div><h1>{page === "Visão geral" ? <>Seu espaço,<br/><em>do seu jeito.</em></> : page}</h1><p className="welcome-copy">Tudo o que você precisa para viver bem o semestre, em um só lugar.</p></div><button className="primary-button" onClick={() => page === "Disciplinas" ? openNewCourse() : (setStep(0), setWizard(true))}><span>＋</span> {page === "Disciplinas" ? "Nova disciplina" : "Configurar semestre"}</button></div>
+        <div className="semester-content-selector"><SemesterSelector onSemesterChange={setActiveSemester} onCreateSemester={startNewSemester} /></div>{page === "Disciplinas" ? <div className="all-disciplines-view"><div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> SEMESTRE {activeSemester?.nome ?? "—"} · FATEC FRANCA</div><h1>Disciplinas</h1><p className="welcome-copy">Todas as disciplinas cadastradas no quadro geral.</p></div>{!process.env.NEXT_PUBLIC_API_URL && <button className="primary-button" onClick={() => openNewCourse()}><span>＋</span> Nova disciplina</button>}</div><section className="panel all-disciplines-panel"><div className="panel-heading"><div><h3>Todas as disciplinas</h3><p>{coursesLoading ? "Carregando disciplinas…" : `${courses.length} ${courses.length === 1 ? "disciplina cadastrada" : "disciplinas cadastradas"}`}</p></div><span className="discipline-count">{coursesLoading ? "…" : String(courses.length).padStart(2, "0")}</span></div>{coursesLoading ? <div className="course-list-state" role="status" aria-live="polite">Carregando suas disciplinas…</div> : coursesError ? <div className="course-list-state course-list-error" role="alert"><b>Não foi possível carregar as disciplinas.</b><span>{coursesError}</span><button className="outline-button" type="button" onClick={() => setCourseReloadKey((key) => key + 1)}>Tentar novamente</button></div> : courses.length ? <div className="course-list">{courses.map((course, index) => renderCourseRow(course, index))}</div> : <div className="all-disciplines-empty"><b>Nenhuma disciplina cadastrada</b><span>{process.env.NEXT_PUBLIC_API_URL ? "Ainda não há disciplinas cadastradas na sua conta." : "Adicione uma disciplina para começar a organizar seu semestre."}</span>{!process.env.NEXT_PUBLIC_API_URL && <button className="outline-button" onClick={() => openNewCourse()}>Adicionar disciplina</button>}</div>}</section></div> : <><div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> SEMESTRE {activeSemester?.nome ?? "—"} · FATEC FRANCA</div><h1>{page === "Visão geral" ? <>Seu espaço,<br/><em>do seu jeito.</em></> : page}</h1><p className="welcome-copy">Tudo o que você precisa para viver bem o semestre, em um só lugar.</p></div><button className="primary-button" onClick={() => page === "Disciplinas" ? openNewCourse() : (setStep(0), setWizard(true))}><span>＋</span> {page === "Disciplinas" ? "Nova disciplina" : "Configurar semestre"}</button></div>
 
         <div className="stat-grid"><article className="stat-card"><div className="stat-top"><span>SEMESTRE ATIVO</span><span className="stat-icon lilac">▦</span></div><strong>{activeSemester?.nome ?? "—"}</strong><p>{formatSemesterRange(activeSemester)} <span className="status-pill">{activeSemester ? "Ativo" : "Indisponível"}</span></p></article><article className="stat-card"><div className="stat-top"><span>DISCIPLINAS</span><span className="stat-icon mint">▤</span></div><strong>{String(semesterCourses.length).padStart(2, "0")}</strong><p>no seu semestre <button className="text-action" onClick={() => { setPage("Disciplinas"); }}>Ver todas <span>↗</span></button></p></article><article className="stat-card"><div className="stat-top"><span>DOCENTES</span><span className="stat-icon peach">♙</span></div><strong>{String(new Set(semesterCourses.map(c => c.teacher)).size).padStart(2, "0")}</strong><p>conectados às disciplinas <button className="text-action" onClick={() => setPage("Docentes")}>Ver contatos <span>↗</span></button></p></article></div>
 
         <div className="section-heading"><div><div className="eyebrow">SEU SEMESTRE</div><h2>Uma boa rotina começa aqui.</h2></div><button className="subtle-button" onClick={() => { setStep(0); setWizard(true); }}>Editar semestre <span>↗</span></button></div>
-        <div className="lower-grid"><section className="panel courses-panel"><div className="panel-heading"><div><h3>Disciplinas</h3><p>O que faz parte da sua jornada.</p></div><button className="round-add" aria-label="Adicionar disciplina" onClick={() => openNewCourse()}>＋</button></div><div className="course-list">{semesterCourses.slice(0, 4).map((course) => renderCourseRow(course, courses.indexOf(course)))}</div><button className="panel-link" onClick={() => setPage("Disciplinas")}>Ver todas as disciplinas <span>→</span></button></section>
+        <div className="lower-grid"><section className="panel courses-panel"><div className="panel-heading"><div><h3>Disciplinas</h3><p>O que faz parte da sua jornada.</p></div>{!process.env.NEXT_PUBLIC_API_URL && <button className="round-add" aria-label="Adicionar disciplina" onClick={() => openNewCourse()}>＋</button>}</div><div className="course-list">{coursesLoading ? <div className="course-list-state" role="status" aria-live="polite">Carregando suas disciplinas…</div> : coursesError ? <div className="course-list-state course-list-error" role="alert"><span>{coursesError}</span><button className="outline-button" type="button" onClick={() => setCourseReloadKey((key) => key + 1)}>Tentar novamente</button></div> : semesterCourses.slice(0, 4).map((course) => renderCourseRow(course, courses.indexOf(course)))}</div><button className="panel-link" onClick={() => setPage("Disciplinas")}>Ver todas as disciplinas <span>→</span></button></section>
           <section className="panel classes-panel"><div className="panel-heading"><div><h3>Aulas</h3><p>Horários das disciplinas deste semestre.</p></div><span className="discipline-count">{String(classEntries.length).padStart(2, "0")}</span></div>{classEntries.length ? <div className="class-list">{classEntries.map(({ course, schedule }, index) => <article className="class-row" key={`${course.id}-${schedule.day}-${index}`}><span className={`course-monogram tone-${courses.indexOf(course) % 4}`}>{course.code.slice(0, 2).toUpperCase()}</span><div className="class-details"><b>{course.name}</b><span>{schedule.day} · {schedule.start}–{schedule.end}{course.room ? ` · ${course.room}` : ""}</span></div><small className={course.repeatWeekly ? "class-frequency weekly" : "class-frequency"}>{course.repeatWeekly ? "Semanal" : "Avulsa"}</small></article>)}</div> : <div className="class-empty">Nenhum horário cadastrado para as disciplinas deste semestre.</div>}</section></div>
         <footer className="footer"><span>Feito para acompanhar você. <b>✳</b></span><span>HUB SCHOOL · 2026</span></footer>
       </>}
