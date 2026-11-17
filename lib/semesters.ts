@@ -49,6 +49,19 @@ export async function createSemester(input: Pick<Semester, "nome" | "data_inicio
     return semester;
   }
 
+  try {
+    const existingList = await getSemesters();
+    const found = existingList.find((s) => s.nome.trim().toLowerCase() === input.nome.trim().toLowerCase());
+    if (found) {
+      await updateSemester(found.id, input);
+      await activateSemester(found.id);
+      window.dispatchEvent(new Event("hub-school-semesters-change"));
+      return { ...found, ...input, ativo: true };
+    }
+  } catch {
+    // segue para o POST caso a busca falhe
+  }
+
   const result = await apiFetch<Semester>("semestres", {
     method: "POST",
     body: JSON.stringify(input),

@@ -171,7 +171,7 @@ export default function AttendancePanel({ courses, semester, coursesLoading, onU
         const all = readDemoRecords();
         all[course.id] = (all[course.id] ?? []).filter((item) => item.id !== record.id);
         writeDemoRecords(all);
-      } else await deleteAttendance(course.id, record.id);
+      } else await deleteAttendance(record.id);
       setStates((current) => ({ ...current, [course.id]: { ...(current[course.id] ?? { rows: [], loading: false, error: "", saving: false }), rows: (current[course.id]?.rows ?? []).filter((item) => item.id !== record.id), loading: false, error: "", saving: false } }));
       setEditingRecord(null);
     } catch (error) {

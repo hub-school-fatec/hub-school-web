@@ -65,7 +65,7 @@ export default function TeachersView({ teachers, courses, loading, error, onRetr
 
   function openTeacherEditor(teacher: Teacher | null = null) {
     setEditing(teacher);
-    setSelectedCourseIds(teacher?.courseIds ?? courses.filter((course) => course.teacherId === teacher?.id || (teacher && course.teacher.toLocaleLowerCase() === teacher.name.toLocaleLowerCase())).map((course) => course.id));
+    setSelectedCourseIds(teacher ? (demoMode ? teacher.courseIds : courses.filter((course) => course.teacherId === teacher.id).map((course) => course.id)) : []);
     setFormError("");
     setEditorOpen(true);
   }
@@ -81,6 +81,7 @@ export default function TeachersView({ teachers, courses, loading, error, onRetr
       courseIds: form.getAll("courseIds").map(String),
     };
     if (!input.name) { setFormError("Informe o nome do professor."); return; }
+    if (!demoMode && !input.email) { setFormError("Informe o e-mail do professor."); return; }
     setSaving(true);
     setFormError("");
     try {
@@ -91,11 +92,12 @@ export default function TeachersView({ teachers, courses, loading, error, onRetr
         setDemoTeachers(next);
         window.localStorage.setItem(demoTeachersKey, JSON.stringify(next));
       } else {
-        await saveTeacher(input, editing?.id);
+        await saveTeacher(input, courses, editing?.id);
         onReload();
       }
       setEditorOpen(false);
     } catch (saveError) {
+      if (!demoMode) onReload();
       setFormError(saveError instanceof Error ? saveError.message : "Não foi possível salvar o professor.");
     } finally {
       setSaving(false);
@@ -130,8 +132,8 @@ export default function TeachersView({ teachers, courses, loading, error, onRetr
               const normalizedName = teacher.name.trim().toLocaleLowerCase();
               const associatedCourses = courses.filter((course) =>
                 (course.teacherId && course.teacherId === teacher.id)
-                || teacher.courseIds.includes(course.id)
-                || (course.teacher.trim() && course.teacher.trim().toLocaleLowerCase() === normalizedName),
+                || (demoMode && teacher.courseIds.includes(course.id))
+                || (demoMode && course.teacher.trim() && course.teacher.trim().toLocaleLowerCase() === normalizedName),
               );
               const courseNames = Array.from(new Set([
                 ...teacher.courseNames,

@@ -47,21 +47,35 @@ function normalizeTeacher(value: ApiTeacher): Teacher {
   };
 }
 
-export async function saveTeacher(input: Pick<Teacher, "name" | "email" | "phone" | "observations" | "courseIds">, id?: string) {
-  const path = id ? `professores/${encodeURIComponent(id)}` : "professores";
+export async function saveTeacher(input: Pick<Teacher, "name" | "email" | "phone" | "observations" | "courseIds">,
+                                  courses: { id: string; teacherId?: string }[], id?: string) {
+  const path = id ? `docentes/${encodeURIComponent(id)}` : "docentes";
   const result = await apiFetch<Record<string, unknown>>(path, {
     method: id ? "PATCH" : "POST",
-    body: JSON.stringify({ nome: input.name, email: input.email || null, telefone: input.phone || null, observacoes: input.observations || null, disciplina_ids: input.courseIds }),
+    body: JSON.stringify({ nome: input.name, email: input.email, telefone: input.phone || null, observacoes: input.observations || null }),
   });
-  return normalizeTeacher(result);
+  const saved = normalizeTeacher(result);
+  const selected = new Set(input.courseIds);
+  for (const course of courses) {
+    if (selected.has(course.id) && course.teacherId !== saved.id) {
+      await apiFetch(`disciplinas/${encodeURIComponent(course.id)}`, {
+        method: "PATCH", body: JSON.stringify({ docente_id: saved.id }),
+      });
+    } else if (!selected.has(course.id) && course.teacherId === saved.id) {
+      await apiFetch(`disciplinas/${encodeURIComponent(course.id)}`, {
+        method: "PATCH", body: JSON.stringify({ docente_id: null }),
+      });
+    }
+  }
+  return saved;
 }
 
 export async function deleteTeacher(id: string) {
-  await apiFetch<void>(`professores/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await apiFetch<void>(`docentes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function getTeachers(): Promise<Teacher[]> {
-  const result = await apiFetch<unknown>("professores");
+  const result = await apiFetch<unknown>("docentes");
   let payload: unknown = result;
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     const wrapper = payload as Record<string, unknown>;

@@ -240,7 +240,7 @@
   .course-meta { font-size: clamp(9px, .65vw, 12px); }
 }
 .course-actions { position: relative; flex: none; }
-.course-actions-menu { position: absolute; z-index: 15; top: calc(100% + 4px); right: 0; min-width: 120px; padding: 5px; border: 1px solid #eceaf0; border-radius: 8px; background: #fff; box-shadow: 0 10px 24px #30284b20; }
+.course-actions-menu { position: fixed; z-index: 50; min-width: 120px; padding: 5px; border: 1px solid #eceaf0; border-radius: 8px; background: #fff; box-shadow: 0 10px 24px #30284b20; }
 .course-actions-menu button { width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: #45424f; font-size: 11px; text-align: left; cursor: pointer; }
 .course-actions-menu button:hover, .course-actions-menu button:focus-visible { background: #f5f3fb; outline: none; }
 @media(max-width:520px){.course-room{display:none}.course-actions,.row-more{display:block}}
@@ -386,6 +386,17 @@
 .note-attachments { display: grid; gap: 5px; margin: 12px 0 0; padding: 0; color: #898592; font-size: 9px; list-style: none; }
 .note-attachments a { color: #7163bc; text-decoration: none; }
 .note-attachments a:hover { text-decoration: underline; }
+.note-attachments li { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.note-attachments button { border: 0; background: transparent; color: #7163bc; font-size: inherit; text-decoration: underline; }
+.note-attachments button:disabled { opacity: .5; cursor: wait; }
+.note-preview { width: min(850px, 95vw); max-height: 92vh; overflow: auto; }
+.note-preview h2 { margin-right: 28px; overflow-wrap: anywhere; }
+.note-preview iframe { width: 100%; height: min(72vh, 650px); border: 0; }
+.note-preview img { display: block; max-width: 100%; max-height: 72vh; margin: auto; object-fit: contain; }
+.onboarding-schedule { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; margin-top: 12px; border: 1px solid #eeebf2; border-radius: 9px; }
+.onboarding-schedule label { display: grid; gap: 6px; min-width: 0; font-size: 10px; }
+.onboarding-schedule input, .onboarding-schedule select { width: 100%; min-width: 0; }
+.onboarding-schedule button { justify-self: start; border: 0; background: transparent; color: #7163bc; font-size: 11px; }
 .note-editor { max-height: min(92vh, 800px); overflow-y: auto; }
 .note-editor > label { margin-bottom: 13px; }
 .note-editor textarea { width: 100%; resize: vertical; border: 1px solid #e9e7ed; border-radius: 7px; padding: 10px; color: #45434e; font: inherit; font-size: 11px; outline: none; }
@@ -498,6 +509,15 @@
 .teacher-actions button:last-child { border-color: #f0e2e2; background: #fffafa; }
 .note-card-top button { min-height: 34px; padding: 6px 8px; border-radius: 6px; font-size: 11px; }
 .course-actions-menu button { min-height: 38px; font-size: 12px; }
+.api-course-schedules { display: grid; gap: 10px; margin-top: 20px; }
+.api-course-form { max-height: min(92vh, 820px); overflow-y: auto; }
+.api-course-schedules h3 { margin: 0; font-size: 14px; }
+.api-course-schedules p { margin: 0; color: #777481; font-size: 11px; }
+.api-course-schedule { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 12px; border: 1px solid #eeebf2; border-radius: 9px; background: #faf9fc; }
+.api-course-schedule label { display: grid; gap: 5px; min-width: 0; font-size: 10px; color: #696672; }
+.api-course-schedule input, .api-course-schedule select { width: 100%; min-width: 0; }
+.api-course-schedule .subtle-button { justify-self: start; }
+.api-course-schedules + .profile-feedback { margin-top: 12px; }
 .row-more { min-width: 36px; min-height: 36px; border-radius: 7px; font-size: 19px; }
 .text-action { min-height: 34px; padding: 6px 8px; font-size: 11px; }
 .panel-link { min-height: 42px; font-size: 11px; }
@@ -548,5 +568,7 @@
 @media (max-width: 520px) { .attendance-settings-editor { grid-template-columns: 1fr; } }.attendance-schedule-hint { margin: -4px 0 12px; color: #777286; font-size: 12px; line-height: 1.5; }.agenda-event-button { width: 100%; border: 0; border-left: 2px solid #8577cc; font: inherit; text-align: left; cursor: pointer; }
 .agenda-event-button:hover { filter: brightness(.97); }
 .agenda-event-button:focus-visible { outline: 2px solid #6658bb; outline-offset: 2px; }
+.agenda-event.event-academic { border-color: #6e8bb5; background: #eef3fb; color: #4e6892; }
+.agenda-event.event-cancelled { opacity: .58; text-decoration: line-through; }
 .schedule-row-focused { border-color: #8577cc !important; box-shadow: 0 0 0 3px rgba(133,119,204,.17); }
 .agenda-class-details > p { color: #777286; line-height: 1.55; }.reminder-options input[type="number"] { flex: 0 0 92px; width: 92px; min-width: 92px; height: 36px; border: 1px solid #e9e7ed; border-radius: 7px; padding: 0 9px; background: #fff; color: #242630; font-size: 13px; }

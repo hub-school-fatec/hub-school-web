@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Course } from "../../lib/courses";
 import type { Semester } from "../../lib/semesters";
-import { createEvent, filterEventsForSemester, getAcademicCalendar, getEvents, updateEvent, type AcademicEvent, type EventType } from "../../lib/events";
+import { createEvent, deleteEvent, filterEventsForSemester, getAcademicCalendar, getEvents, localDay, occursOnDay, updateEvent, type AcademicEvent, type EventType } from "../../lib/events";
 
 const demoEventsKey = "hub-school-demo-events";
 const eventTypes: Array<{ value: EventType; label: string }> = [
@@ -29,9 +29,12 @@ function weekdayNumber(value: string) {
   if (normalized.startsWith("sáb") || normalized.startsWith("sab") || normalized === "6") return 6;
   return -1;
 }
-function dateTime(date: Date, time: string) { return `${dateKey(date)}T${time || "00:00"}`; }
+function dateTime(date: Date, time: string) { return new Date(`${dateKey(date)}T${time || "00:00"}:00`).toISOString(); }
 function dateTimeLocal(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value.slice(0, 16) : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 function formatTime(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return "Dia inteiro";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const match = value.match(/T(\d{2}:\d{2})/);
   return match?.[1] ?? "Dia inteiro";
 }
@@ -56,7 +59,7 @@ function scheduledClasses(courses: Course[], semester: Semester | null, rangeSta
           start: dateTime(day, startTime),
           end: dateTime(day, endTime),
           courseId: course.id,
-          reminderDays: [],
+          reminderMinutes: [], reminderActive: false, cancelled: false,
         });
       }
     }
@@ -110,14 +113,7 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
     void load();
     return () => { cancelled = true; };
   }, [apiMode, reloadKey]);
-  const visibleCursor = useMemo(() => {
-    if (!semester?.data_inicio || !semester.data_fim) return cursor;
-    const start = dateFromKey(semester.data_inicio);
-    const end = dateFromKey(semester.data_fim);
-    if (cursor < start) return start;
-    if (cursor > end) return end;
-    return cursor;
-  }, [cursor, semester?.data_inicio, semester?.data_fim]);
+  const visibleCursor = cursor;
   const visibleRange = useMemo(() => {
     if (view === "month") {
       return { start: new Date(visibleCursor.getFullYear(), visibleCursor.getMonth(), 1), end: new Date(visibleCursor.getFullYear(), visibleCursor.getMonth() + 1, 0) };
@@ -148,7 +144,9 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
     : `${visibleRange.start.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${visibleRange.end.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}`;
 
   function moveRange(amount: number) {
-    setCursor(new Date(visibleCursor.getFullYear(), visibleCursor.getMonth() + (view === "month" ? amount : 0), visibleCursor.getDate() + (view === "week" ? amount * 7 : 0)));
+    setCursor(view === "month"
+      ? new Date(visibleCursor.getFullYear(), visibleCursor.getMonth() + amount, 1)
+      : new Date(visibleCursor.getFullYear(), visibleCursor.getMonth(), visibleCursor.getDate() + amount * 7));
   }
 
   async function submitEvent(event: FormEvent<HTMLFormElement>) {
@@ -159,23 +157,26 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
     const form = new FormData(formElement);
     const startValue = String(form.get("start"));
     const endValue = String(form.get("end"));
-    if (new Date(endValue) < new Date(startValue)) {
+    if (!startValue || Number.isNaN(new Date(startValue).getTime())
+        || (endValue && (Number.isNaN(new Date(endValue).getTime()) || new Date(endValue) < new Date(startValue)))) {
       setFormError("O horário de término precisa ser posterior ao início.");
       setSaving(false);
       return;
     }
     const reminders = form.getAll("reminder").map(Number);
-    const customReminder = Number(form.get("reminderCustom"));
-    if (customReminder > 0 && !reminders.includes(customReminder)) reminders.push(customReminder);
+    const customValue = String(form.get("reminderCustom") ?? "").trim();
+    const customReminder = Number(customValue);
+    if (customValue && Number.isInteger(customReminder) && customReminder >= 0 && !reminders.includes(customReminder)) reminders.push(customReminder);
     const courseId = String(form.get("courseId") ?? "");
     const eventData = {
       title: String(form.get("title")).trim(),
       type: String(form.get("type")) as EventType,
       start: new Date(startValue).toISOString(),
-      end: new Date(endValue).toISOString(),
+      end: endValue ? new Date(endValue).toISOString() : null,
       courseId: courseId || null,
-      reminderDays: reminders,
-      notificationChannel: String(form.get("channel") || "email") === "push" ? "push" as const : "email" as const,
+      reminderMinutes: reminders,
+      reminderActive: form.has("reminderActive") && reminders.length > 0,
+      cancelled: editingEvent?.cancelled ?? false,
     };
     try {
       if (editingEvent) {
@@ -196,6 +197,7 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
           return next;
         });
       }
+      if (apiMode) setReloadKey((key) => key + 1);
       setEditorOpen(false);
       setEditingEvent(null);
       formElement.reset();
@@ -204,6 +206,38 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
     } finally {
       setSaving(false);
     }
+  }
+
+  async function removeSelected() {
+    if (!selectedClass || !events.some((item) => item.id === selectedClass.id)) return;
+    if (!window.confirm("Excluir este evento?")) return;
+    setSaving(true); setFormError("");
+    try {
+      if (apiMode) await deleteEvent(selectedClass.id);
+      else {
+        const next = events.filter((item) => item.id !== selectedClass.id);
+        window.localStorage.setItem(demoEventsKey, JSON.stringify(next));
+      }
+      setEvents((current) => current.filter((item) => item.id !== selectedClass.id));
+      setSelectedClass(null);
+      if (apiMode) setReloadKey((key) => key + 1);
+    } catch (cause) { setFormError(cause instanceof Error ? cause.message : "Não foi possível excluir o evento."); }
+    finally { setSaving(false); }
+  }
+
+  async function cancelSelected() {
+    if (!selectedClass || !events.some((item) => item.id === selectedClass.id)) return;
+    setSaving(true); setFormError("");
+    try {
+      const changed = apiMode
+        ? await updateEvent(selectedClass.id, { ...selectedClass, cancelled: !selectedClass.cancelled })
+        : { ...selectedClass, cancelled: !selectedClass.cancelled };
+      const next = events.map((item) => item.id === changed.id ? changed : item);
+      if (!apiMode) window.localStorage.setItem(demoEventsKey, JSON.stringify(next));
+      setEvents(next); setSelectedClass(null);
+      if (apiMode) setReloadKey((key) => key + 1);
+    } catch (cause) { setFormError(cause instanceof Error ? cause.message : "Não foi possível alterar o evento."); }
+    finally { setSaving(false); }
   }
 
   return <div className="agenda-view">
@@ -216,7 +250,7 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
           : <div className={`agenda-calendar ${view === "month" ? "month-view" : "week-view"}`}>
             {days.map((day) => {
               const key = dateKey(day);
-              const dayEvents = filteredEvents.filter((item) => item.start.slice(0, 10) === key).sort((a, b) => a.start.localeCompare(b.start));
+              const dayEvents = filteredEvents.filter((item) => occursOnDay(item, key)).sort((a, b) => a.start.localeCompare(b.start));
               return <section className={`agenda-day ${view === "month" && day.getMonth() !== visibleCursor.getMonth() ? "outside-month" : ""}`} key={key}>
                 <div className="agenda-day-heading"><span>{weekdayNames[day.getDay()]}</span><b>{day.getDate()}</b></div>
                 <div className="agenda-day-events">{dayEvents.map((item) => {
@@ -225,7 +259,7 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
                   const scheduledClass = item.id.startsWith("class-") && Boolean(item.courseId);
                   const editableEvent = events.some((event) => event.id === item.id);
                   const interactive = scheduledClass || editableEvent;
-                  const className = `agenda-event event-${item.type}${interactive ? " agenda-event-button" : ""}`;
+                  const className = `agenda-event ${item.academic ? "event-academic" : `event-${item.type}`}${item.cancelled ? " event-cancelled" : ""}${interactive ? " agenda-event-button" : ""}`;
                   return interactive
                     ? <button type="button" className={className} key={item.id} title={`${item.title} · ${formatTime(item.start)} · clique para ver opções`} onClick={() => setSelectedClass(item)}>{content}</button>
                     : <article className={className} key={item.id} title={`${item.title} · ${formatTime(item.start)}`}>{content}</article>;
@@ -237,10 +271,10 @@ export default function AgendaView({ courses, semester, onEditCourseSchedule }: 
     </section>
     {selectedClass && (() => {
       const course = courses.find((item) => item.id === selectedClass.courseId);
-      const date = dateFromKey(selectedClass.start.slice(0, 10));
+      const date = dateFromKey(localDay(selectedClass.start));
       const scheduledClass = selectedClass.id.startsWith("class-");
       const scheduleIndex = course?.schedule.findIndex((schedule) => weekdayNumber(schedule.day) === date.getDay() && schedule.start === formatTime(selectedClass.start)) ?? -1;
-      return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedClass(null); }}><section className="modal agenda-class-details"><button type="button" className="modal-close" aria-label="Fechar" onClick={() => setSelectedClass(null)}>×</button><span className="eyebrow">{scheduledClass ? "HORÁRIO DA DISCIPLINA" : typeLabel(selectedClass.type).toUpperCase()}</span><h2>{scheduledClass ? course?.name ?? selectedClass.title : selectedClass.title}</h2><p>{date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })} · {formatTime(selectedClass.start)}–{formatTime(selectedClass.end)}</p>{scheduledClass ? <><p>Este evento vem do horário semanal cadastrado na disciplina.</p><div className="modal-actions"><button type="button" className="subtle-button" onClick={() => setSelectedClass(null)}>Fechar</button><button type="button" className="primary-button" disabled={!course || scheduleIndex < 0} onClick={() => { if (course && scheduleIndex >= 0) onEditCourseSchedule(course.id, scheduleIndex); setSelectedClass(null); }}>Editar horário da disciplina</button></div></> : <><p>{course ? `Disciplina: ${course.name}` : "Evento sem disciplina associada."}</p><div className="modal-actions"><button type="button" className="subtle-button" onClick={() => setSelectedClass(null)}>Fechar</button><button type="button" className="primary-button" onClick={() => { setEditingEvent(selectedClass); setFormError(""); setSelectedClass(null); setEditorOpen(true); }}>Editar evento</button></div></>}</section></div>;
-    })()}    {editorOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><form key={editingEvent?.id ?? "new"} className="modal event-editor" onSubmit={submitEvent}><button type="button" className="modal-close" aria-label="Fechar" onClick={() => { setEditorOpen(false); setEditingEvent(null); }}>×</button><span className="eyebrow">AGENDA</span><h2>{editingEvent ? "Editar evento" : "Novo evento"}</h2><p>Organize provas, entregas, aulas e outros compromissos.</p><label>Título<input name="title" required maxLength={120} defaultValue={editingEvent?.title ?? ""} placeholder="Ex.: Prova de Banco de Dados"/></label><div className="form-grid"><label>Tipo<select name="type" defaultValue={editingEvent?.type ?? "prova"}>{eventTypes.filter((item) => item.value !== "aula").map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label><label>Disciplina (opcional)<select name="courseId" defaultValue={editingEvent?.courseId ?? ""}><option value="">Sem disciplina</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label><label>Início<input type="datetime-local" name="start" required defaultValue={editingEvent ? dateTimeLocal(editingEvent.start) : ""}/></label><label>Fim<input type="datetime-local" name="end" required defaultValue={editingEvent ? dateTimeLocal(editingEvent.end) : ""}/></label></div><fieldset className="reminder-options"><legend>Lembretes</legend><label><input type="checkbox" name="reminder" value="3" defaultChecked={editingEvent ? editingEvent.reminderDays.includes(3) : true}/> 3 dias antes</label><label><input type="checkbox" name="reminder" value="1" defaultChecked={editingEvent ? editingEvent.reminderDays.includes(1) : true}/> 1 dia antes</label><label>Outro prazo (dias antes)<input type="number" name="reminderCustom" min="1" max="365" defaultValue={editingEvent?.reminderDays.find((days) => days !== 1 && days !== 3) ?? ""} placeholder="Ex.: 7"/></label><label>Canal<select name="channel" defaultValue={editingEvent?.notificationChannel ?? "email"}><option value="email">E-mail</option><option value="push" disabled>Notifica??o no navegador (requer PWA)</option></select></label></fieldset>{formError && <div className="profile-feedback" role="alert">{formError}</div>}<div className="modal-actions"><button className="subtle-button" type="button" onClick={() => setEditorOpen(false)}>Cancelar</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Salvando…" : editingEvent ? "Salvar alterações" : "Salvar evento"}</button></div></form></div>}
+      return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedClass(null); }}><section className="modal agenda-class-details"><button type="button" className="modal-close" aria-label="Fechar" onClick={() => setSelectedClass(null)}>×</button><span className="eyebrow">{scheduledClass ? "HORÁRIO DA DISCIPLINA" : typeLabel(selectedClass.type).toUpperCase()}</span><h2>{scheduledClass ? course?.name ?? selectedClass.title : selectedClass.title}</h2><p>{date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })} · {formatTime(selectedClass.start)}–{selectedClass.end ? formatTime(selectedClass.end) : "sem término"}</p>{scheduledClass ? <><p>Este evento vem do horário semanal cadastrado na disciplina.</p><div className="modal-actions"><button type="button" className="subtle-button" onClick={() => setSelectedClass(null)}>Fechar</button><button type="button" className="primary-button" disabled={!course || scheduleIndex < 0} onClick={() => { if (course && scheduleIndex >= 0) onEditCourseSchedule(course.id, scheduleIndex); setSelectedClass(null); }}>Editar horário da disciplina</button></div></> : <><p>{course ? `Disciplina: ${course.name}` : "Evento sem disciplina associada."}{selectedClass.cancelled ? " · Cancelado" : ""}</p>{formError && <p role="alert" className="profile-feedback">{formError}</p>}<div className="modal-actions"><button type="button" className="subtle-button" onClick={() => setSelectedClass(null)}>Fechar</button><button type="button" disabled={saving} onClick={() => void cancelSelected()}>{selectedClass.cancelled ? "Reativar" : "Cancelar evento"}</button><button type="button" disabled={saving} onClick={() => void removeSelected()}>Excluir</button><button type="button" className="primary-button" onClick={() => { setEditingEvent(selectedClass); setFormError(""); setSelectedClass(null); setEditorOpen(true); }}>Editar evento</button></div></>}</section></div>;
+    })()}    {editorOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><form key={editingEvent?.id ?? "new"} className="modal event-editor" onSubmit={submitEvent}><button type="button" className="modal-close" aria-label="Fechar" onClick={() => { setEditorOpen(false); setEditingEvent(null); }}>×</button><span className="eyebrow">AGENDA</span><h2>{editingEvent ? "Editar evento" : "Novo evento"}</h2><p>Organize provas, entregas, aulas e outros compromissos.</p><label>Título<input name="title" required maxLength={120} defaultValue={editingEvent?.title ?? ""} placeholder="Ex.: Prova de Banco de Dados"/></label><div className="form-grid"><label>Tipo<select name="type" defaultValue={editingEvent?.type ?? "prova"}>{eventTypes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label><label>Disciplina (opcional)<select name="courseId" defaultValue={editingEvent?.courseId ?? ""}><option value="">Sem disciplina</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label><label>Início<input type="datetime-local" name="start" required defaultValue={editingEvent ? dateTimeLocal(editingEvent.start) : ""}/></label><label>Fim<input type="datetime-local" name="end" defaultValue={editingEvent?.end ? dateTimeLocal(editingEvent.end) : ""}/></label></div><fieldset className="reminder-options"><legend>Lembretes</legend><label><input type="checkbox" name="reminderActive" defaultChecked={editingEvent ? editingEvent.reminderActive : true}/> Ativar lembretes</label><label><input type="checkbox" name="reminder" value="4320" defaultChecked={editingEvent ? editingEvent.reminderMinutes.includes(4320) : true}/> 3 dias antes</label><label><input type="checkbox" name="reminder" value="1440" defaultChecked={editingEvent ? editingEvent.reminderMinutes.includes(1440) : true}/> 1 dia antes</label><label>Outro prazo (minutos antes)<input type="number" name="reminderCustom" min="0" step="1" defaultValue={editingEvent?.reminderMinutes.find((minutes) => minutes !== 1440 && minutes !== 4320) ?? ""} placeholder="Ex.: 60"/></label></fieldset>{formError && <div className="profile-feedback" role="alert">{formError}</div>}<div className="modal-actions"><button className="subtle-button" type="button" onClick={() => setEditorOpen(false)}>Cancelar</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Salvando…" : editingEvent ? "Salvar alterações" : "Salvar evento"}</button></div></form></div>}
   </div>;
 }
