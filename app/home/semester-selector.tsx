@@ -41,7 +41,13 @@ export default function SemesterSelector({ onSemesterChange, onCreateSemester }:
     try {
       const result = await getSemesters();
       setSemesters(result);
-      onSemesterChangeRef.current(result.find((semester) => semester.ativo) ?? null);
+      let active = result.find((semester) => semester.ativo) ?? null;
+      if (!active && result.length > 0) {
+        const updated = await activateSemester(result[0].id);
+        setSemesters(updated);
+        active = updated.find((semester) => semester.ativo) ?? updated[0];
+      }
+      onSemesterChangeRef.current(active);
     } catch (loadError) {
       setError(semesterErrorMessage(loadError, "Não foi possível carregar os semestres."));
     } finally {
