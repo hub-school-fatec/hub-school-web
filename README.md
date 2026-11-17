@@ -53,7 +53,7 @@ O projeto não define um script `npm test`; os testes locais usam o executor int
 
 ## Limitações e validação manual
 
-- No modo API, a interface mantém a exclusão de **anotações** indisponível. O backend retorna HTTP 409 quando encontra anexos e exige excluí-los individualmente primeiro, mas ainda há uma condição de corrida entre a consulta e a exclusão; a proteção não garante ausência absoluta de objetos órfãos.
+
 - O calendário acadêmico retorna apenas uma data por registro no contrato atual. A interface não presume períodos acadêmicos de vários dias.
 - O primeiro acesso depende de o projeto Supabase disponibilizar o perfil `public.usuario` exigido pelo banco; o frontend não cria esse perfil diretamente. Confirme o provisionamento de contas novas no ambiente de entrega.
 - A integração real de todos os módulos, incluindo eventos, calendário, primeiro acesso com conta nova e retomada após falha, ainda exige teste manual com usuário comum no ambiente de destino. Testes locais e build não comprovam esse funcionamento no Supabase real.
