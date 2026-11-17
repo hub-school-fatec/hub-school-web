@@ -4,11 +4,16 @@ import { Button } from "@heroui/react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import ApiOnboarding from "./api-wizard";
 
 type CourseDraft = { name: string; code: string; hours: string; classesPerWeek: string; days: string; time: string; room: string };
 type TeacherDraft = { name: string; email: string; phone: string; courseCode: string };
 
 export default function Onboarding() {
+  return process.env.NEXT_PUBLIC_API_URL ? <ApiOnboarding /> : <DemoOnboarding />;
+}
+
+function DemoOnboarding() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [semester, setSemester] = useState("2026/2");

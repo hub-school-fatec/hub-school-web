@@ -8,6 +8,8 @@ export default async function FirstAccessPage() {
     const supabase = await createClient();
     const { data } = await supabase.auth.getClaims();
     if (!data?.claims) redirect("/login");
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData.user?.user_metadata?.hub_school_onboarding_completed === true) redirect("/home");
   }
   return <Onboarding />;
 }

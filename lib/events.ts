@@ -1,94 +1,94 @@
 import { apiFetch } from "./api";
 
 export type EventType = "prova" | "trabalho" | "apresentacao" | "aula" | "evento";
-export type AcademicEventType = EventType | "feriado" | "semana_provas" | "inicio" | "fim";
 export type AcademicEvent = {
   id: string;
   title: string;
-  type: AcademicEventType;
+  type: string;
   start: string;
-  end: string;
+  end: string | null;
   courseId: string | null;
-  reminderDays: number[];
-  notificationChannel?: "email" | "push";
+  reminderMinutes: number[];
+  reminderActive: boolean;
+  cancelled: boolean;
+  academic?: boolean;
 };
+export type EventInput = Omit<AcademicEvent, "id" | "academic">;
 
-function valueString(value: unknown) {
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+function rows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
+    throw new Error("A API retornou uma lista de eventos inválida.");
+  }
+  return value as Record<string, unknown>[];
 }
 
-function normalizeEvent(value: Record<string, unknown>, academic = false): AcademicEvent {
-  const start = value.inicio ?? value.data ?? value.start;
-  const end = value.fim ?? value.end ?? start;
-  const reminders = value.lembretes_dias_antes ?? value.reminderDays;
-  const type = value.tipo ?? value.type;
+function eventFromApi(row: Record<string, unknown>): AcademicEvent {
+  if (typeof row.id !== "string" || typeof row.titulo !== "string" || typeof row.tipo !== "string"
+      || typeof row.inicio !== "string" || !Array.isArray(row.antecedencias_minutos)
+      || typeof row.cancelado !== "boolean" || typeof row.lembrete_ativo !== "boolean") {
+    throw new Error("A API retornou um evento inválido.");
+  }
   return {
-    id: valueString(value.id ?? value.uuid) || `${academic ? "cal" : "evt"}-${valueString(start)}-${valueString(value.titulo ?? value.descricao)}`,
-    title: valueString(value.titulo ?? value.descricao ?? value.title) || "Evento sem título",
-    type: (valueString(type) || (academic ? "evento" : "evento")) as AcademicEventType,
-    start: valueString(start),
-    end: valueString(end),
-    courseId: valueString(value.disciplina_id ?? value.courseId) || null,
-    reminderDays: Array.isArray(reminders) ? reminders.map(Number).filter(Number.isFinite) : [],
-    notificationChannel: value.canal === "push" || value.notificationChannel === "push" ? "push" : "email",
+    id: row.id, title: row.titulo, type: row.tipo, start: row.inicio,
+    end: typeof row.fim === "string" ? row.fim : null,
+    courseId: typeof row.disciplina_id === "string" ? row.disciplina_id : null,
+    reminderMinutes: row.antecedencias_minutos.map(Number),
+    reminderActive: row.lembrete_ativo, cancelled: row.cancelado,
   };
 }
 
-function unwrapList(result: unknown, keys: string[]) {
-  let value = result;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const wrapper = value as Record<string, unknown>;
-    value = keys.map((key) => wrapper[key]).find((item) => item !== undefined) ?? wrapper.data ?? wrapper.items;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const nested = value as Record<string, unknown>;
-      value = keys.map((key) => nested[key]).find((item) => item !== undefined) ?? nested.items;
-    }
+function calendarFromApi(row: Record<string, unknown>): AcademicEvent {
+  if (typeof row.id !== "string" || typeof row.data !== "string"
+      || typeof row.tipo !== "string" || typeof row.descricao !== "string") {
+    throw new Error("A API retornou uma data acadêmica inválida.");
   }
-  if (!Array.isArray(value)) throw new Error("A resposta da API não contém uma lista de eventos.");
-  return value;
+  return { id: `calendar-${row.id}`, title: row.descricao, type: row.tipo,
+    start: row.data.slice(0, 10), end: null, courseId: null,
+    reminderMinutes: [], reminderActive: false, cancelled: false, academic: true };
 }
 
-export async function getEvents() {
-  const result = await apiFetch<unknown>("eventos");
-  return unwrapList(result, ["eventos"]).map((event) => normalizeEvent(event as Record<string, unknown>));
+function body(event: EventInput) {
+  return {
+    titulo: event.title, tipo: event.type, inicio: event.start, fim: event.end,
+    disciplina_id: event.courseId, antecedencias_minutos: event.reminderMinutes,
+    lembrete_ativo: event.reminderActive, cancelado: event.cancelled,
+  };
 }
 
-export async function getAcademicCalendar() {
-  const result = await apiFetch<unknown>("calendario-academico");
-  return unwrapList(result, ["calendario_academico", "eventos", "calendario"]).map((event) => normalizeEvent(event as Record<string, unknown>, true));
+export async function getEvents(): Promise<AcademicEvent[]> {
+  return rows(await apiFetch<unknown>("eventos")).map(eventFromApi);
 }
 
-export async function createEvent(event: Omit<AcademicEvent, "id">) {
-  const result = await apiFetch<Record<string, unknown>>("eventos", {
-    method: "POST",
-    body: JSON.stringify({
-      titulo: event.title,
-      tipo: event.type,
-      inicio: event.start,
-      fim: event.end,
-      disciplina_id: event.courseId,
-      lembretes_dias_antes: event.reminderDays,
-      canal: event.notificationChannel ?? "email",
-    }),
-  });
-  return normalizeEvent(result);
+export async function getAcademicCalendar(): Promise<AcademicEvent[]> {
+  return rows(await apiFetch<unknown>("calendario-academico")).map(calendarFromApi);
 }
 
-export async function updateEvent(id: string, event: Omit<AcademicEvent, "id">) {
-  const result = await apiFetch<Record<string, unknown> | undefined>(`eventos/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      titulo: event.title,
-      tipo: event.type,
-      inicio: event.start,
-      fim: event.end,
-      disciplina_id: event.courseId,
-      lembretes_dias_antes: event.reminderDays,
-      canal: event.notificationChannel ?? "email",
-    }),
-  });
-  return result && (result.id || result.uuid) ? normalizeEvent(result) : { ...event, id };
+export async function createEvent(event: EventInput): Promise<AcademicEvent> {
+  return eventFromApi(await apiFetch<Record<string, unknown>>("eventos", { method: "POST", body: JSON.stringify(body(event)) }));
 }
+
+export async function updateEvent(id: string, event: EventInput): Promise<AcademicEvent> {
+  return eventFromApi(await apiFetch<Record<string, unknown>>(`eventos/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body(event)) }));
+}
+
+export async function deleteEvent(id: string): Promise<void> {
+  await apiFetch<void>(`eventos/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function localDay(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export function occursOnDay(event: AcademicEvent, day: string): boolean {
+  const start = localDay(event.start);
+  const end = event.end ? localDay(event.end) : start;
+  return Boolean(start && end && start <= day && day <= end);
+}
+
 export function filterEventsForSemester<T extends { id: string }>(
   events: AcademicEvent[],
   semester: { id: string; data_inicio?: string | null; data_fim?: string | null } | null,
@@ -96,14 +96,11 @@ export function filterEventsForSemester<T extends { id: string }>(
 ) {
   if (!semester) return events;
   const courseIds = new Set(courses.map((course) => course.id));
-  const start = semester.data_inicio ? new Date(`${semester.data_inicio.slice(0, 10)}T00:00:00`).getTime() : null;
-  const end = semester.data_fim ? new Date(`${semester.data_fim.slice(0, 10)}T23:59:59.999`).getTime() : null;
   return events.filter((event) => {
     if (event.courseId && !courseIds.has(event.courseId)) return false;
-    const eventTime = new Date(event.start).getTime();
-    if (Number.isNaN(eventTime)) return false;
-    if (start !== null && eventTime < start) return false;
-    if (end !== null && eventTime > end) return false;
-    return true;
+    const start = localDay(event.start);
+    const end = event.end ? localDay(event.end) : start;
+    return Boolean(start && end && (!semester.data_inicio || end >= semester.data_inicio.slice(0, 10))
+      && (!semester.data_fim || start <= semester.data_fim.slice(0, 10)));
   });
 }

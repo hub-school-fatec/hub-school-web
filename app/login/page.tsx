@@ -23,11 +23,11 @@ export default function LoginPage() {
     try {
       const supabase = createClient();
       const result = register
-        ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/primeiro-acesso` } })
+        ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/primeiro-acesso`, data: { hub_school_onboarding_completed: false } } })
         : await supabase.auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
       if (register && !result.data.session) setMessage("Confira seu e-mail para confirmar a conta e continuar.");
-      else router.push(register ? "/primeiro-acesso" : "/home");
+      else router.push(register || result.data.user?.user_metadata?.hub_school_onboarding_completed === false ? "/primeiro-acesso" : "/home");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível autenticar. Tente novamente.");
     } finally { setBusy(false); }

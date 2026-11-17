@@ -11,6 +11,9 @@ export default async function HomePage() {
     if (!data?.claims) redirect("/login");
 
     const { data: userData, error } = await supabase.auth.getUser();
+    if (!error && userData.user?.user_metadata?.hub_school_onboarding_completed === false) {
+      redirect("/primeiro-acesso");
+    }
     if (!error && userData.user) {
       const email = userData.user.email ?? "";
       const metadata = userData.user.user_metadata as Record<string, unknown>;
