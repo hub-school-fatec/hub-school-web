@@ -5,7 +5,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Course } from "../../lib/courses";
 import { getEvents, type AcademicEvent } from "../../lib/events";
-import { deleteNoteAttachment, downloadNoteAttachment, getNotes, saveNote, uploadNoteAttachment, type AcademicNote, type NoteAttachment } from "../../lib/notes";
+import { deleteNote, deleteNoteAttachment, downloadNoteAttachment, getNotes, saveNote, uploadNoteAttachment, type AcademicNote, type NoteAttachment } from "../../lib/notes";
 
 const demoNotesKey = "hub-school-demo-notes";
 const demoEventsKey = "hub-school-demo-events";
@@ -134,14 +134,20 @@ export default function NotesView({ courses }: { courses: Course[] }) {
   }
 
   async function removeNote(note: AcademicNote) {
-    if (apiMode) return;
     if (!window.confirm(`Excluir a anotação “${note.title}”?`)) return;
     try {
+      if (apiMode) {
+        for (const attachment of note.attachments) {
+          await deleteNoteAttachment(attachment.id);
+        }
+        await deleteNote(note.id);
+      }
       setNotes((current) => {
         const next = current.filter((item) => item.id !== note.id);
         if (!apiMode) window.localStorage.setItem(demoNotesKey, JSON.stringify(next));
         return next;
       });
+      setNotice(`Anotação “${note.title}” excluída.`);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Não foi possível excluir a anotação.");
     }
@@ -193,12 +199,11 @@ export default function NotesView({ courses }: { courses: Course[] }) {
     <div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> SEU MATERIAL ACADÊMICO</div><h1>Anotações</h1><p className="welcome-copy">Suas ideias, lembretes e materiais organizados por disciplina e evento.</p></div><button className="primary-button" type="button" onClick={() => openEditor()}><span>＋</span> Nova anotação</button></div>
     <section className="panel notes-panel">
       <div className="notes-filters"><label className="notes-search">Buscar anotações<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por título ou conteúdo"/></label><label>Disciplina<select value={courseFilter} onChange={(event) => setCourseFilter(event.target.value)}><option value="">Todas</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label><label>Evento<select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="">Todos</option>{events.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label></div>
-      {apiMode && <p className="notes-warning" role="status">A exclusão de anotações está indisponível até que o backend garanta a limpeza segura dos anexos no Storage. Anexos podem ser excluídos individualmente.</p>}
       {eventWarning && <p className="notes-warning" role="status">Eventos indisponíveis para vinculação: {eventWarning}</p>}
       {loading ? <div className="course-list-state" role="status" aria-live="polite">Carregando suas anotações…</div>
         : error ? <div className="course-list-state course-list-error" role="alert"><b>Não foi possível carregar suas anotações.</b><span>{error}</span><button className="outline-button" type="button" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</button></div>
           : filteredNotes.length === 0 ? <div className="all-disciplines-empty"><b>{notes.length ? "Nenhuma anotação corresponde à busca" : "Ainda não há anotações"}</b><span>{notes.length ? "Experimente alterar os filtros." : "Crie uma anotação e vincule-a a uma disciplina ou evento."}</span>{!notes.length && <button className="outline-button" type="button" onClick={() => openEditor()}>Criar anotação</button>}</div>
-            : <div className="note-grid">{filteredNotes.map((note) => <article className="note-card" key={note.id}><div className="note-card-top"><span className="note-date">{new Date(note.updatedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}</span><div><button type="button" aria-label={`Editar ${note.title}`} onClick={() => openEditor(note)}>Editar</button>{!apiMode && <button type="button" className="note-delete" aria-label={`Excluir ${note.title}`} onClick={() => void removeNote(note)}>Excluir</button>}</div></div><h3>{note.title}</h3><p>{note.body}</p><div className="note-links">{note.courseId && <span>{courses.find((course) => course.id === note.courseId)?.name ?? "Disciplina"}</span>}{note.eventId && <span>{events.find((item) => item.id === note.eventId)?.title ?? "Evento"}</span>}</div>{note.attachments.length > 0 && <ul className="note-attachments">{note.attachments.map((file) => <li key={file.id}>▧ <span>{file.name}</span>{apiMode && <><button type="button" disabled={busyAttachment === file.id} onClick={() => void previewAttachment(file)}>Visualizar</button><button type="button" disabled={busyAttachment === file.id} onClick={() => void downloadAttachment(file)}>Baixar</button><button type="button" disabled={busyAttachment === file.id} onClick={() => void removeAttachment(file)}>Excluir</button></>}</li>)}</ul>}</article>)}</div>}
+            : <div className="note-grid">{filteredNotes.map((note) => <article className="note-card" key={note.id}><div className="note-card-top"><span className="note-date">{new Date(note.updatedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}</span><div><button type="button" aria-label={`Editar ${note.title}`} onClick={() => openEditor(note)}>Editar</button><button type="button" className="note-delete" aria-label={`Excluir ${note.title}`} onClick={() => void removeNote(note)}>Excluir</button></div></div><h3>{note.title}</h3><p>{note.body}</p><div className="note-links">{note.courseId && <span>{courses.find((course) => course.id === note.courseId)?.name ?? "Disciplina"}</span>}{note.eventId && <span>{events.find((item) => item.id === note.eventId)?.title ?? "Evento"}</span>}</div>{note.attachments.length > 0 && <ul className="note-attachments">{note.attachments.map((file) => <li key={file.id}>▧ <span>{file.name}</span>{apiMode && <><button type="button" disabled={busyAttachment === file.id} onClick={() => void previewAttachment(file)}>Visualizar</button><button type="button" disabled={busyAttachment === file.id} onClick={() => void downloadAttachment(file)}>Baixar</button><button type="button" disabled={busyAttachment === file.id} onClick={() => void removeAttachment(file)}>Excluir</button></>}</li>)}</ul>}</article>)}</div>}
     </section>
     {notice && <div className="toast" role="status">{notice}</div>}
     {preview && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview(); }}><div className="modal note-preview" role="dialog" aria-modal="true" aria-label={`Visualizar ${preview.name}`}><button type="button" className="modal-close" aria-label="Fechar prévia" onClick={closePreview}>×</button><h2>{preview.name}</h2>{preview.mime === "application/pdf" ? <iframe src={preview.url} title={preview.name} /> : <img src={preview.url} alt={preview.name} />}</div></div>}
